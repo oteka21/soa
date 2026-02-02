@@ -39,6 +39,7 @@ import {
   XCircle,
   Edit,
   Download,
+  CheckCircle2,
 } from "lucide-react"
 import { Header } from "@/components/dashboard/header"
 import { DocumentView } from "@/components/review/document-view"
@@ -150,7 +151,7 @@ export default function ProjectPage({
 
     // Poll for updates while workflow is in progress
     let pollCount = 0
-    const maxPolls = 200 // Stop after 10 minutes (200 * 3 seconds)
+    const maxPolls = 300 // Stop after 15 minutes (300 * 3 seconds) - batch generation takes 6-9 min
     
     const pollInterval = setInterval(async () => {
       pollCount++
@@ -192,13 +193,23 @@ export default function ProjectPage({
             // Force state update to ensure UI reflects completion
             setProject({ ...data })
             clearInterval(pollInterval)
+            
+            // If generation completed successfully, show success message
+            if (step2Status === "completed" && data.sections?.length > 0) {
+              console.log("[polling] Generation complete - sections available")
+              toast.success("SOA generated successfully!", { duration: 3000 })
+            } else if (step2Status === "failed") {
+              console.error("[polling] Generation failed - showing error state")
+              // The error state UI will be shown automatically by the render logic
+            }
+            
             return
           }
           
           // If step2 has been in_progress for too long, warn user
-          if (step2Status === "in_progress" && pollCount > 40) {
-            // After 2 minutes, show a warning
-            console.warn("[polling] Step 2 has been in_progress for a while - workflow may be stuck")
+          if (step2Status === "in_progress" && pollCount > 200) {
+            // After 10 minutes (batch generation takes 6-9 min normally), show a warning
+            console.warn("[polling] Step 2 has been in_progress for over 10 minutes - workflow may be stuck")
           }
         }
       } catch (error) {
@@ -569,12 +580,7 @@ export default function ProjectPage({
               // Upload step → Go to upload page
               router.push(`/projects/${projectId}/upload`)
               break
-            case 4:
-            case 5:
-              // Review steps → Go to review page
-              router.push(`/projects/${projectId}/review`)
-              break
-            // Steps 2, 3, 6 stay on this page
+            // All other steps (2, 3, 4, 5, 6) stay on this page
           }
         }}
       />
@@ -629,13 +635,18 @@ export default function ProjectPage({
                     </Button>
                     <Button
                       variant="outline"
-                      onClick={handleStartWorkflow}
+                      onClick={() => {
+                        if (confirm("This will regenerate ALL sections, overwriting any manual edits. Continue?")) {
+                          handleStartWorkflow()
+                        }
+                      }}
                       disabled={isStartingWorkflow || workflowState.stepStatuses.step2 === "in_progress"}
+                      className="h-8"
                     >
                       <Play className="mr-2 h-4 w-4" />
                       {isStartingWorkflow || workflowState.stepStatuses.step2 === "in_progress"
-                        ? "Regenerating..."
-                        : "Regenerate"}
+                        ? "Regenerating All..."
+                        : "Regenerate All Sections"}
                     </Button>
                   </>
                 )}
@@ -643,14 +654,26 @@ export default function ProjectPage({
             </CardHeader>
             <CardContent className="flex-1 min-h-0 flex flex-col">
               {workflowState.stepStatuses.step2 === "in_progress" ? (
-                <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="flex flex-col items-center justify-center py-12 text-center max-w-2xl mx-auto">
                   <Loader2 className="mb-4 h-12 w-12 text-primary animate-spin" />
-                  <p className="text-lg font-medium">Generating SOA...</p>
+                  <p className="text-lg font-medium">Generating SOA in Batches...</p>
                   <p className="text-sm text-muted-foreground mt-1">
-                    Analyzing documents and creating Statement of Advice sections
+                    Generating 30+ sections in 5 batches to ensure reliability
                   </p>
+                  <div className="mt-4 p-4 bg-muted/50 rounded-lg text-left space-y-2">
+                    <p className="text-xs font-medium">Progress (check terminal for details):</p>
+                    <ul className="text-xs text-muted-foreground space-y-1 list-disc list-inside">
+                      <li>Batch 1/5: Main sections (10) - ~1-2 min</li>
+                      <li>Batch 2/5: Personal & financial details (10) - ~1-2 min</li>
+                      <li>Batch 3/5: Advice scope & risk (8) - ~1-2 min</li>
+                      <li>Batch 4/5: Product recommendations (11) - ~1-2 min</li>
+                      <li>Batch 5/5: Costs & agreement (7) - ~1 min</li>
+                    </ul>
+                  </div>
                   <p className="text-xs text-muted-foreground mt-4">
-                    This may take a few minutes. The page will update automatically.
+                    <strong>Estimated time: 6-9 minutes</strong>
+                    <br />
+                    Sections will appear as each batch completes. Page auto-updates.
                   </p>
                   {project.sections?.length === 0 && (
                     <Button
@@ -690,13 +713,51 @@ export default function ProjectPage({
                   <p className="text-sm text-muted-foreground mt-1">
                     The SOA generation encountered an error. Please try again.
                   </p>
-                  <Button
-                    className="mt-4"
-                    onClick={handleStartWorkflow}
-                    disabled={isStartingWorkflow}
-                  >
-                    {isStartingWorkflow ? "Starting..." : "Retry Generation"}
-                  </Button>
+                  <div className="flex gap-2 mt-4">
+                    <Button
+                      variant="outline"
+                      onClick={async () => {
+                        try {
+                          const response = await fetch(`/api/projects/${projectId}/workflow/reset`, {
+                            method: "POST",
+                          })
+                          if (response.ok) {
+                            toast.success("Workflow reset")
+                            await refreshProject()
+                          } else {
+                            const error = await response.json()
+                            toast.error(`Failed to reset: ${error.error || "Unknown error"}`)
+                          }
+                        } catch (error) {
+                          console.error("Reset error:", error)
+                          toast.error("Failed to reset workflow")
+                        }
+                      }}
+                    >
+                      <XCircle className="mr-2 h-4 w-4" />
+                      Reset Workflow
+                    </Button>
+                    <Button
+                      onClick={async () => {
+                        // Reset first, then start
+                        try {
+                          const resetResponse = await fetch(`/api/projects/${projectId}/workflow/reset`, {
+                            method: "POST",
+                          })
+                          if (resetResponse.ok) {
+                            await handleStartWorkflow()
+                          } else {
+                            toast.error("Failed to reset. Please try manually resetting first.")
+                          }
+                        } catch (error) {
+                          toast.error("Failed to reset workflow")
+                        }
+                      }}
+                      disabled={isStartingWorkflow}
+                    >
+                      {isStartingWorkflow ? "Starting..." : "Retry Generation"}
+                    </Button>
+                  </div>
                 </div>
               ) : project.sections?.length ? (
                 viewMode === "document" ? (
@@ -713,12 +774,62 @@ export default function ProjectPage({
                     />
                   </div>
                 )
+              ) : project.documents?.length > 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-center space-y-6">
+                  <div>
+                    <CheckCircle2 className="mb-4 h-12 w-12 text-green-500 mx-auto" />
+                    <p className="text-lg font-medium">Documents Uploaded</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {project.documents.length} document(s) ready for processing
+                    </p>
+                  </div>
+                  
+                  {/* Show uploaded documents */}
+                  <div className="w-full max-w-md">
+                    <div className="rounded-lg border bg-muted/50 p-4">
+                      <h4 className="font-medium mb-2">Uploaded Files:</h4>
+                      <ul className="space-y-1 text-sm">
+                        {project.documents.map((doc: Document) => (
+                          <li key={doc.id} className="flex items-center gap-2">
+                            <FileText className="h-4 w-4 text-muted-foreground" />
+                            {doc.name}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </div>
+                  
+                  <div className="flex gap-2">
+                    <Button variant="outline" asChild>
+                      <Link href={`/projects/${projectId}/upload`}>
+                        <Upload className="mr-2 h-4 w-4" />
+                        Upload More
+                      </Link>
+                    </Button>
+                    <Button
+                      onClick={handleStartWorkflow}
+                      disabled={isStartingWorkflow}
+                    >
+                      {isStartingWorkflow ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Play className="mr-2 h-4 w-4" />
+                          Generate SOA
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </div>
               ) : (
                 <div className="flex flex-col items-center justify-center py-8 text-center">
                   <FileText className="mb-4 h-12 w-12 text-muted-foreground" />
-                  <p className="text-muted-foreground">No sections generated yet</p>
+                  <p className="text-muted-foreground">No documents uploaded yet</p>
                   <p className="text-sm text-muted-foreground">
-                    Upload documents and click Generate SOA to get started
+                    Upload client documents to start generating the SOA
                   </p>
                   <Button className="mt-4" asChild>
                     <Link href={`/projects/${projectId}/upload`}>

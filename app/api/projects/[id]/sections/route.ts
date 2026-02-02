@@ -237,16 +237,15 @@ export async function POST(
           const { generateObject } = await import("ai")
           const { createOpenAI } = await import("@ai-sdk/openai")
           const { soaResponseSchema } = await import("@/lib/soa-zod-schema")
-          const { soaStructuredPrompt } = await import("@/system_prompts/soa_structured")
           const { main } = await import("@/system_prompts/main")
-          const { soaTemplate } = await import("@/system_prompts/soa_template")
+          const { soaConcisePrompt } = await import("@/system_prompts/soa_concise")
 
           const openai = createOpenAI({
             baseURL: "https://ai-gateway.vercel.sh/v1",
             apiKey: process.env.AI_GATEWAY_API_KEY,
           })
 
-          const systemPrompt = `${main}\n\n${soaTemplate}\n\n${soaStructuredPrompt}\n\nIMPORTANT: Generate content ONLY for section ${sectionId} (${template.title}). Do not generate other sections.`
+          const systemPrompt = `${main}\n\n${soaConcisePrompt}\n\nIMPORTANT: Generate content ONLY for section ${sectionId} (${template.title}). Do not generate other sections.`
 
           const userMessage = buildSectionUserMessage(documentData, template)
 

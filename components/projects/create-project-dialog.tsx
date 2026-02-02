@@ -72,7 +72,7 @@ export function CreateProjectDialog({ trigger }: CreateProjectDialogProps) {
       toast.success("Project created successfully")
       setOpen(false)
       form.reset()
-      router.push(`/projects/${project.id}/upload`)
+      router.push(`/projects/${project.id}`)
       router.refresh()
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create project")

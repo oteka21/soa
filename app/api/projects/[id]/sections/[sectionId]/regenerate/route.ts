@@ -6,9 +6,8 @@ import { eq, and } from "drizzle-orm"
 import { generateObject } from "ai"
 import { createOpenAI } from "@ai-sdk/openai"
 import { soaResponseSchema } from "@/lib/soa-zod-schema"
-import { soaStructuredPrompt } from "@/system_prompts/soa_structured"
 import { main } from "@/system_prompts/main"
-import { soaTemplate } from "@/system_prompts/soa_template"
+import { soaConcisePrompt } from "@/system_prompts/soa_concise"
 import { soaSectionTemplates } from "@/lib/soa-schema"
 import { createVersion } from "@/lib/version-control"
 
@@ -82,7 +81,7 @@ export async function POST(
     })
 
     // Combine system prompts
-    const systemPrompt = `${main}\n\n${soaTemplate}\n\n${soaStructuredPrompt}\n\nIMPORTANT: Generate content ONLY for section ${sectionId} (${template.title}). Do not generate other sections.`
+    const systemPrompt = `${main}\n\n${soaConcisePrompt}\n\nIMPORTANT: Generate content ONLY for section ${sectionId} (${template.title}). Do not generate other sections.`
 
     // Generate section content
     let generatedSection

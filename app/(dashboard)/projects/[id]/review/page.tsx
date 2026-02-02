@@ -22,7 +22,7 @@ import { ReviewActions } from "@/components/review/review-actions"
 import { DocumentView } from "@/components/review/document-view"
 import { EditModeView } from "@/components/review/edit-mode-view"
 import { toast } from "sonner"
-import { ArrowLeft, History, MessageSquare, FileText, Edit } from "lucide-react"
+import { ArrowLeft, History, MessageSquare, FileText, Edit, Loader2, CheckCircle2 } from "lucide-react"
 import { Header } from "@/components/dashboard/header"
 
 interface SectionContent {
@@ -232,6 +232,38 @@ export default function ReviewPage({
   const currentStep = workflowState?.currentStep ?? 4
   const isAwaitingApproval =
     workflowState?.stepStatuses?.[`step${currentStep}`] === "awaiting_approval"
+  const [isRunningCompliance, setIsRunningCompliance] = useState(false)
+
+  // Handler to run compliance check and start approval workflow
+  const handleRunCompliance = async () => {
+    setIsRunningCompliance(true)
+    try {
+      const response = await fetch(`/api/projects/${projectId}/workflow/compliance`, {
+        method: "POST",
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Failed to run compliance check")
+      }
+
+      toast.success("Compliance check started. The workflow will now proceed to review approval.")
+      
+      // Reload page to show updated workflow state
+      setTimeout(() => {
+        window.location.reload()
+      }, 2000)
+    } catch (error) {
+      console.error("Failed to run compliance:", error)
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to run compliance check"
+      )
+    } finally {
+      setIsRunningCompliance(false)
+    }
+  }
 
   if (isLoading) {
     return <ReviewPageSkeleton />
@@ -298,6 +330,29 @@ export default function ReviewPage({
               </div>
             </SheetContent>
           </Sheet>
+          
+          {/* Show "Submit for Review" button after generation (step 2) before compliance */}
+          {workflowState?.stepStatuses?.step2 === "completed" && currentStep === 2 && (
+            <Button
+              onClick={handleRunCompliance}
+              disabled={isRunningCompliance}
+              size="sm"
+              className="bg-green-600 hover:bg-green-700"
+            >
+              {isRunningCompliance ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Running Compliance...
+                </>
+              ) : (
+                <>
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  Submit for Review
+                </>
+              )}
+            </Button>
+          )}
+          
           {isAwaitingApproval && (
             <ReviewActions
               step={currentStep as 4 | 5}

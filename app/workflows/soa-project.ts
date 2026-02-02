@@ -32,93 +32,30 @@ export interface ProjectWorkflowResult {
   error?: string
 }
 
-export async function buildProjectSoa(
+/**
+ * Run compliance check and approval workflow (Steps 3-6)
+ * Called manually after user reviews generated sections
+ */
+export async function runComplianceAndApproval(
   input: ProjectWorkflowInput
 ): Promise<ProjectWorkflowResult> {
   "use workflow"
 
-  console.log("[workflow/buildProjectSoa] Function called")
-  console.log("[workflow/buildProjectSoa] Input received:", JSON.stringify(input, null, 2))
-  console.log("[workflow/buildProjectSoa] Input type:", typeof input)
-  console.log("[workflow/buildProjectSoa] Input is undefined?", input === undefined)
-  console.log("[workflow/buildProjectSoa] Input is null?", input === null)
-
-  if (!input) {
-    const errorMsg = "Input is undefined or null"
-    console.error(`[workflow/buildProjectSoa] ERROR: ${errorMsg}`)
-    throw new Error(errorMsg)
-  }
-
-  if (!input.projectId) {
-    const errorMsg = "projectId is missing from input"
-    console.error(`[workflow/buildProjectSoa] ERROR: ${errorMsg}`)
-    console.error(`[workflow/buildProjectSoa] Input keys:`, Object.keys(input))
-    throw new Error(errorMsg)
-  }
-
-  if (!input.userId) {
-    const errorMsg = "userId is missing from input"
-    console.error(`[workflow/buildProjectSoa] ERROR: ${errorMsg}`)
-    throw new Error(errorMsg)
-  }
-
   const { projectId, userId } = input
 
-  console.log(`[workflow/buildProjectSoa] Starting SOA workflow for project ${projectId}, user ${userId}`)
+  console.log(`[workflow/runComplianceAndApproval] Starting compliance workflow for project ${projectId}`)
 
   try {
-    // Step 1: Parse documents (documents are already parsed during upload,
-    // but this step validates and prepares them for generation)
-    console.log("[workflow/buildProjectSoa] Step 1: Validating parsed documents")
-    console.log("[workflow/buildProjectSoa] Calling stepParseDocuments with projectId:", projectId)
-    const parseResult = await stepParseDocuments(projectId)
-    console.log("[workflow/buildProjectSoa] Step 1 result:", JSON.stringify({ success: parseResult.success, documentCount: parseResult.documents?.length, error: parseResult.error }, null, 2))
-    
-    if (!parseResult.success) {
-      console.error("[workflow/buildProjectSoa] Step 1 failed:", parseResult.error)
-      return {
-        projectId,
-        success: false,
-        currentStep: 1,
-        status: "failed",
-        error: parseResult.error,
-      }
-    }
-
-    // Step 2: Generate SOA sections using LLM
-    console.log("[workflow/buildProjectSoa] Step 2: Generating SOA sections")
-    console.log("[workflow/buildProjectSoa] Calling stepGenerateSOA with projectId:", projectId, "documentCount:", parseResult.documents.length, "userId:", userId)
-    const generateResult = await stepGenerateSOA(projectId, parseResult.documents, userId)
-    console.log("[workflow/buildProjectSoa] Step 2 result:", JSON.stringify({ success: generateResult.success, sectionsCreated: generateResult.sectionsCreated, sectionsFailed: generateResult.sectionsFailed, error: generateResult.error }, null, 2))
-    if (!generateResult.success) {
-      // Allow partial success - if some sections were created, continue with warnings
-      if (generateResult.partialSuccess && generateResult.sectionsCreated > 0) {
-        console.warn(
-          `[workflow] Partial success: ${generateResult.sectionsCreated} sections created, ${generateResult.sectionsFailed} failed`
-        )
-        // Continue workflow but note the partial success
-      } else {
-        return {
-          projectId,
-          success: false,
-          currentStep: 2,
-          status: "failed",
-          error: generateResult.error || "Failed to generate any SOA sections",
-        }
-      }
-    }
-
     // Step 3: Regulatory compliance check
-    // Note: This step identifies issues but doesn't block - user reviews in step 4
     console.log("[workflow] Step 3: Running regulatory compliance check")
     const complianceResult = await stepRegulatoryCheck(projectId)
     
-    // Log issues for visibility - they'll be shown in the review UI
+    // Log issues for visibility
     if (complianceResult.criticalIssues?.length > 0) {
-      console.log(`[workflow] Compliance issues found (for review):`, complianceResult.criticalIssues)
+      console.log(`[workflow] Compliance issues found:`, complianceResult.criticalIssues)
     }
     if (complianceResult.warnings?.length > 0) {
-      console.log(`[workflow] Compliance warnings (for review):`, complianceResult.warnings)
+      console.log(`[workflow] Compliance warnings:`, complianceResult.warnings)
     }
     
     // Only fail if there was an actual error (not just compliance issues)
@@ -177,6 +114,110 @@ export async function buildProjectSoa(
       projectId,
       success: true,
       currentStep: 6,
+      status: "completed",
+    }
+  } catch (error) {
+    console.error("[workflow/runComplianceAndApproval] Error:", error)
+    return {
+      projectId,
+      success: false,
+      currentStep: 0,
+      status: "failed",
+      error: error instanceof Error ? error.message : "Unknown error",
+    }
+  }
+}
+
+/**
+ * Initial SOA Generation Workflow (Steps 1-2)
+ * Generates sections and stops for user review
+ */
+export async function buildProjectSoa(
+  input: ProjectWorkflowInput
+): Promise<ProjectWorkflowResult> {
+  "use workflow"
+  
+  // Extract values early to ensure they're captured properly by workflow
+  const { projectId, userId } = input || {}
+  
+  console.log("=".repeat(80))
+  console.log("[workflow/buildProjectSoa] 🚀 WORKFLOW STARTED")
+  console.log("[workflow/buildProjectSoa] Timestamp:", new Date().toISOString())
+  console.log("[workflow/buildProjectSoa] Function called")
+  console.log("[workflow/buildProjectSoa] projectId:", projectId)
+  console.log("[workflow/buildProjectSoa] userId:", userId)
+  console.log("=".repeat(80))
+
+  if (!projectId) {
+    const errorMsg = "projectId is missing from input"
+    console.error(`[workflow/buildProjectSoa] ❌ ERROR: ${errorMsg}`)
+    throw new Error(errorMsg)
+  }
+
+  if (!userId) {
+    const errorMsg = "userId is missing from input"
+    console.error(`[workflow/buildProjectSoa] ❌ ERROR: ${errorMsg}`)
+    throw new Error(errorMsg)
+  }
+
+  console.log(`[workflow/buildProjectSoa] Starting SOA workflow for project ${projectId}, user ${userId}`)
+
+  try {
+    // Step 1: Parse documents (documents are already parsed during upload,
+    // but this step validates and prepares them for generation)
+    console.log("[workflow/buildProjectSoa] Step 1: Validating parsed documents")
+    console.log("[workflow/buildProjectSoa] Calling stepParseDocuments with projectId:", projectId)
+    const parseResult = await stepParseDocuments(projectId)
+    console.log("[workflow/buildProjectSoa] Step 1 result:", JSON.stringify({ success: parseResult.success, documentCount: parseResult.documents?.length, error: parseResult.error }, null, 2))
+    
+    if (!parseResult.success) {
+      console.error("[workflow/buildProjectSoa] Step 1 failed:", parseResult.error)
+      return {
+        projectId,
+        success: false,
+        currentStep: 1,
+        status: "failed",
+        error: parseResult.error,
+      }
+    }
+
+    // Step 2: Generate SOA sections using LLM
+    console.log("[workflow/buildProjectSoa] Step 2: Generating SOA sections")
+    console.log("[workflow/buildProjectSoa] Calling stepGenerateSOA with projectId:", projectId, "documentCount:", parseResult.documents.length, "userId:", userId)
+    const generateResult = await stepGenerateSOA(projectId, parseResult.documents, userId)
+    console.log("[workflow/buildProjectSoa] Step 2 result:", JSON.stringify({ success: generateResult.success, sectionsCreated: generateResult.sectionsCreated, sectionsFailed: generateResult.sectionsFailed, error: generateResult.error }, null, 2))
+    if (!generateResult.success) {
+      // Allow partial success - if some sections were created, continue with warnings
+      if (generateResult.partialSuccess && generateResult.sectionsCreated > 0) {
+        console.warn(
+          `[workflow] Partial success: ${generateResult.sectionsCreated} sections created, ${generateResult.sectionsFailed} failed`
+        )
+        // Continue workflow but note the partial success
+      } else {
+        return {
+          projectId,
+          success: false,
+          currentStep: 2,
+          status: "failed",
+          error: generateResult.error || "Failed to generate any SOA sections",
+        }
+      }
+    }
+
+    // STOP HERE - Don't auto-progress to compliance check and review
+    // User will manually trigger step 3 when ready
+    console.log("\n" + "=".repeat(80))
+    console.log("[workflow] 🎉 WORKFLOW COMPLETED SUCCESSFULLY")
+    console.log("[workflow] Step 2 completed - stopping for user review")
+    console.log("[workflow] Sections generated:", generateResult.sectionsCreated || 0)
+    console.log("[workflow] User should review sections before proceeding to compliance check")
+    console.log("[workflow] Timestamp:", new Date().toISOString())
+    console.log("=".repeat(80) + "\n")
+    
+    return {
+      projectId,
+      success: true,
+      currentStep: 2,
       status: "completed",
     }
   } catch (error) {

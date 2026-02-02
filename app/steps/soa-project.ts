@@ -14,11 +14,10 @@ import {
   soaVersions,
 } from "@/db/schema"
 import { eq } from "drizzle-orm"
-import { soaStructuredPrompt } from "@/system_prompts/soa_structured"
 import { soaSectionTemplates } from "@/lib/soa-schema"
 import { soaResponseSchema } from "@/lib/soa-zod-schema"
 import { main } from "@/system_prompts/main"
-import { soaTemplate } from "@/system_prompts/soa_template"
+import { batches } from "@/system_prompts/soa_batches"
 
 // Types
 interface DocumentData {
@@ -304,116 +303,130 @@ export async function stepGenerateSOA(
       apiKey: process.env.AI_GATEWAY_API_KEY,
     })
 
-    // Combine system prompts
-    const systemPrompt = `${main}\n\n${soaTemplate}\n\n${soaStructuredPrompt}`
-
-    // Build the user message with all document content
+    // Build the user message with all document content (shared across all batches)
     console.log(`[step2/stepGenerateSOA] Building user message`)
     const userMessage = buildUserMessage(documentData)
     console.log(`[step2/stepGenerateSOA] User message length:`, userMessage?.length || 0)
-    console.log(`[step2/stepGenerateSOA] System prompt length:`, systemPrompt?.length || 0)
 
-    console.log(`[step2/stepGenerateSOA] Starting LLM generation for ${documentData.length} documents`)
-    console.log(`[step2/stepGenerateSOA] Using model: openai/gpt-4o`)
-    console.log(`[step2/stepGenerateSOA] Max tokens: 16000`)
-
-    // Generate SOA content using structured output
-    let parsedResponse
+    // Delete existing sections for this project before generating new ones
     try {
-      const result = await generateObject({
-        model: openai("openai/gpt-4o"),
-        schema: soaResponseSchema,
-        system: systemPrompt,
-        prompt: userMessage,
-        maxTokens: 16384, // GPT-4o max output tokens
-      })
+      await db
+        .delete(soaSections)
+        .where(eq(soaSections.projectId, projectId))
+      console.log(`[step2/stepGenerateSOA] Deleted existing sections for project ${projectId}`)
+    } catch (deleteError) {
+      console.error(`[step2/stepGenerateSOA] Failed to delete existing sections:`, deleteError)
+      // Continue anyway - duplicates are handled in the UI
+    }
 
-      parsedResponse = result.object
-      console.log(`[step2] Generated ${parsedResponse.sections.length} sections with ${parsedResponse.summary.dataCompleteness.toFixed(2)} completeness`)
-      console.log(`[step2] Section IDs generated:`, parsedResponse.sections.map(s => s.id).join(', '))
-    } catch (generateError) {
-      console.error("[step2] LLM generation error:", generateError)
-      const errorMessage = generateError instanceof Error ? generateError.message : "Unknown error"
+    // BATCH GENERATION: Generate sections in 5 batches to avoid timeouts
+    console.log(`[step2/stepGenerateSOA] 📦 Starting BATCH GENERATION (5 batches)`)
+    console.log(`[step2/stepGenerateSOA] Total batches: ${batches.length}`)
+    
+    let totalSectionsCreated = 0
+    let totalSectionsFailed = 0
+    const allSections: any[] = []
+    const failedBatches: string[] = []
+
+    for (let i = 0; i < batches.length; i++) {
+      const batch = batches[i]
+      const batchNum = i + 1
       
-      // Check if it's an API key or authentication error
-      if (errorMessage.includes("API key") || errorMessage.includes("401") || errorMessage.includes("Unauthorized")) {
-        await updateWorkflowStep(projectId, 2, "failed")
-        return {
-          success: false,
-          sectionsCreated: 0,
-          sectionsFailed: 0,
-          partialSuccess: false,
-          error: "LLM API authentication failed. Please check AI_GATEWAY_API_KEY environment variable.",
+      console.log(`\n${"=".repeat(80)}`)
+      console.log(`[step2/stepGenerateSOA] 📦 BATCH ${batchNum}/${batches.length}: ${batch.name}`)
+      console.log(`[step2/stepGenerateSOA] Expected sections: ${batch.sectionIds.length}`)
+      console.log(`[step2/stepGenerateSOA] Section IDs: ${batch.sectionIds.join(', ')}`)
+      console.log(`${"=".repeat(80)}`)
+
+      try {
+        // Combine system prompts (main + batch-specific prompt)
+        const systemPrompt = `${main}\n\n${batch.prompt}`
+        console.log(`[step2/stepGenerateSOA] System prompt length:`, systemPrompt?.length || 0)
+        
+        console.log(`[step2/stepGenerateSOA] 🔄 Calling LLM API for batch ${batchNum}...`)
+        const startTime = Date.now()
+        
+        // Create timeout promise (3 minutes per batch)
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error(`Batch ${batchNum} timed out after 3 minutes`)), 180000)
+        )
+        
+        // Race between LLM call and timeout
+        const result = await Promise.race([
+          generateObject({
+            model: openai("openai/gpt-4o"),
+            schema: soaResponseSchema,
+            system: systemPrompt,
+            prompt: userMessage,
+            maxRetries: 2,
+          }),
+          timeoutPromise
+        ]) as any
+        
+        const elapsed = Date.now() - startTime
+        console.log(`[step2/stepGenerateSOA] ✅ Batch ${batchNum} completed in ${(elapsed / 1000).toFixed(1)}s`)
+
+        const batchResponse = result.object
+        console.log(`[step2/stepGenerateSOA] Sections generated: ${batchResponse.sections.length}`)
+        console.log(`[step2/stepGenerateSOA] Section IDs: ${batchResponse.sections.map((s: any) => s.id).join(', ')}`)
+        
+        // Save sections from this batch immediately
+        let batchSectionsCreated = 0
+        let batchSectionsFailed = 0
+
+        for (const section of batchResponse.sections) {
+          try {
+            await db.insert(soaSections).values({
+              projectId,
+              sectionId: section.id,
+              title: section.title,
+              contentType: detectContentType(section.content),
+              content: section.content,
+              sources: section.sources || [],
+              requiredFields: section.missingData || [],
+              status: "generated",
+              version: 1,
+            })
+            batchSectionsCreated++
+            allSections.push(section)
+          } catch (insertError) {
+            console.error(`[step2/stepGenerateSOA] Failed to insert section ${section.id}:`, insertError)
+            batchSectionsFailed++
+          }
         }
+
+        totalSectionsCreated += batchSectionsCreated
+        totalSectionsFailed += batchSectionsFailed
+        
+        console.log(`[step2/stepGenerateSOA] ✅ Batch ${batchNum} saved: ${batchSectionsCreated} sections`)
+        
+      } catch (batchError) {
+        console.error(`[step2/stepGenerateSOA] ❌ Batch ${batchNum} failed:`, batchError)
+        failedBatches.push(`Batch ${batchNum} (${batch.name})`)
+        totalSectionsFailed += batch.sectionIds.length
+        
+        // Continue to next batch instead of failing completely
+        console.log(`[step2/stepGenerateSOA] ⚠️ Continuing to next batch...`)
       }
-      
-      // For other errors, fail the step
+    }
+
+    console.log(`\n${"=".repeat(80)}`)
+    console.log(`[step2/stepGenerateSOA] 📊 BATCH GENERATION COMPLETE`)
+    console.log(`[step2/stepGenerateSOA] Total sections created: ${totalSectionsCreated}`)
+    console.log(`[step2/stepGenerateSOA] Total sections failed: ${totalSectionsFailed}`)
+    console.log(`[step2/stepGenerateSOA] Failed batches: ${failedBatches.length > 0 ? failedBatches.join(', ') : 'None'}`)
+    console.log(`${"=".repeat(80)}\n`)
+
+    // Check if we got enough sections
+    if (totalSectionsCreated === 0) {
+      console.error(`[step2/stepGenerateSOA] ❌ No sections were generated`)
       await updateWorkflowStep(projectId, 2, "failed")
       return {
         success: false,
         sectionsCreated: 0,
-        sectionsFailed: 0,
+        sectionsFailed: totalSectionsFailed,
         partialSuccess: false,
-        error: `LLM generation failed: ${errorMessage}`,
-      }
-    }
-
-    // Delete existing sections for this project before inserting new ones
-    // This prevents duplicate sections when regenerating
-    try {
-      const deleteResult = await db
-        .delete(soaSections)
-        .where(eq(soaSections.projectId, projectId))
-      console.log(`[step2] Deleted existing sections for project ${projectId}`)
-    } catch (deleteError) {
-      console.error(`[step2] Failed to delete existing sections:`, deleteError)
-      // Continue anyway - duplicates are handled in the UI
-    }
-
-    // Save sections to database with error handling
-    let sectionsCreated = 0
-    let sectionsFailed = 0
-    const failedSections: string[] = []
-
-    for (const section of parsedResponse.sections) {
-      try {
-        const template = soaSectionTemplates.find((t) => t.id === section.id)
-        if (!template) {
-          console.warn(`[step2] No template found for section ${section.id}`)
-          sectionsFailed++
-          failedSections.push(section.id)
-          continue
-        }
-
-        // Validate source mappings
-        const validatedSources = section.sources.map((s) => {
-          const doc = documentData.find((d) => d.name === s.documentName)
-          return {
-            documentId: doc?.id ?? "",
-            documentName: s.documentName,
-            excerpt: s.excerpt,
-            location: s.location,
-          }
-        })
-
-        await db.insert(soaSections).values({
-          projectId,
-          sectionId: section.id,
-          parentSectionId: template.parentId,
-          title: section.title,
-          contentType: template.contentType,
-          content: section.content,
-          sources: validatedSources,
-          requiredFields: section.missingData ?? [],
-          status: "generated",
-          version: 1,
-        })
-        sectionsCreated++
-      } catch (dbError) {
-        console.error(`[step2] Failed to save section ${section.id}:`, dbError)
-        sectionsFailed++
-        failedSections.push(section.id)
-        // Continue with other sections
+        error: `All batches failed. Failed batches: ${failedBatches.join(', ')}`,
       }
     }
 
@@ -426,20 +439,20 @@ export async function stepGenerateSOA(
           patch: [],
           createdBy: userId,
           changeType: "generation",
-          changeSummary: `Initial SOA generation: ${sectionsCreated} sections created${sectionsFailed > 0 ? `, ${sectionsFailed} failed` : ""}`,
+          changeSummary: `Initial SOA generation (batch): ${totalSectionsCreated} sections created${totalSectionsFailed > 0 ? `, ${totalSectionsFailed} failed` : ""}${failedBatches.length > 0 ? `. Failed batches: ${failedBatches.join(', ')}` : ""}`,
         })
-        console.log("[step2] Version record created successfully")
+        console.log("[step2/stepGenerateSOA] Version record created successfully")
       } catch (versionError) {
-        console.error("[step2] Failed to create version record:", versionError)
+        console.error("[step2/stepGenerateSOA] Failed to create version record:", versionError)
         // Don't fail the whole step if version creation fails
       }
     } else {
-      console.log("[step2] Skipping version record creation - no userId provided")
+      console.log("[step2/stepGenerateSOA] Skipping version record creation - no userId provided")
     }
 
     // Determine if we had partial success
-    const partialSuccess = sectionsCreated > 0 && sectionsFailed > 0
-    const overallSuccess = sectionsCreated > 0
+    const partialSuccess = totalSectionsCreated > 0 && (totalSectionsFailed > 0 || failedBatches.length > 0)
+    const overallSuccess = totalSectionsCreated > 0
 
     if (overallSuccess) {
       await updateWorkflowStep(projectId, 2, "completed")
@@ -447,14 +460,15 @@ export async function stepGenerateSOA(
       await updateWorkflowStep(projectId, 2, "failed")
     }
 
+    console.log(`[step2/stepGenerateSOA] 🎉 Generation complete - returning result`)
     return {
       success: overallSuccess,
-      sectionsCreated,
-      sectionsFailed,
+      sectionsCreated: totalSectionsCreated,
+      sectionsFailed: totalSectionsFailed,
       partialSuccess,
       error:
-        sectionsFailed > 0
-          ? `Failed to generate ${sectionsFailed} sections: ${failedSections.join(", ")}`
+        totalSectionsFailed > 0 || failedBatches.length > 0
+          ? `Batch generation completed with issues. ${failedBatches.length > 0 ? `Failed batches: ${failedBatches.join(', ')}` : ''}`
           : undefined,
     }
   } catch (error) {
@@ -837,4 +851,19 @@ function buildUserMessage(documents: DocumentData[]): string {
   parts.push("If document quality is low or data is missing, clearly mark missing data and include clarification questions.")
 
   return parts.join("\n")
+}
+
+function detectContentType(content: any): "text" | "table" | "bullets" | "mixed" {
+  if (!content) return "text"
+  
+  const hasText = content.text && content.text.length > 0
+  const hasTables = content.tables && content.tables.length > 0
+  const hasBullets = content.bullets && content.bullets.length > 0
+  
+  const count = [hasText, hasTables, hasBullets].filter(Boolean).length
+  
+  if (count > 1) return "mixed"
+  if (hasTables) return "table"
+  if (hasBullets) return "bullets"
+  return "text"
 }
