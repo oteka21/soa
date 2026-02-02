@@ -107,6 +107,7 @@ export default function ProjectPage({
   const [isDeleting, setIsDeleting] = useState(false)
   const [isStartingWorkflow, setIsStartingWorkflow] = useState(false)
   const [isExportingPDF, setIsExportingPDF] = useState(false)
+  const [isRunningCompliance, setIsRunningCompliance] = useState(false)
   const [viewingStep, setViewingStep] = useState<number>(1) // Track which step user is viewing
   const [viewMode, setViewMode] = useState<"document" | "edit">("document")
   const initialLoadDone = useRef(false)
@@ -272,6 +273,34 @@ export default function ProjectPage({
       }
     } catch (error) {
       console.error("Failed to refresh project:", error)
+    }
+  }
+
+  const handleRunCompliance = async () => {
+    setIsRunningCompliance(true)
+    try {
+      const response = await fetch(`/api/projects/${projectId}/workflow/compliance`, {
+        method: "POST",
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || "Failed to run compliance check")
+      }
+
+      toast.success("Compliance check started. The workflow will now proceed to review approval.")
+      
+      // Reload project data to show updated workflow state
+      await refreshProject()
+    } catch (error) {
+      console.error("Failed to run compliance:", error)
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to run compliance check"
+      )
+    } finally {
+      setIsRunningCompliance(false)
     }
   }
 
@@ -598,6 +627,27 @@ export default function ProjectPage({
               <div className="flex items-center gap-2">
                 {project.sections?.length > 0 && (
                   <>
+                    {/* Compliance Check Button */}
+                    <Button
+                      onClick={handleRunCompliance}
+                      disabled={isRunningCompliance}
+                      size="sm"
+                      variant="outline"
+                      className="h-8"
+                    >
+                      {isRunningCompliance ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Running...
+                        </>
+                      ) : (
+                        <>
+                          <CheckCircle2 className="mr-2 h-4 w-4" />
+                          Compliance Check
+                        </>
+                      )}
+                    </Button>
+
                     {/* View Mode Toggle */}
                     <div className="flex items-center gap-1 border rounded-md p-1">
                       <Button
