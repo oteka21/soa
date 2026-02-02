@@ -7,7 +7,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { DocumentToolbar } from "./document-toolbar"
 
 interface SectionContent {
   text?: string
@@ -229,9 +228,6 @@ export function DocumentView({ sections }: DocumentViewProps) {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="shrink-0">
-        <DocumentToolbar sections={sortedSections} />
-      </div>
       <div className="flex-1 overflow-y-auto min-h-0">
         <div 
           className="max-w-4xl mx-auto px-8 py-6 print:max-w-full print:px-4"

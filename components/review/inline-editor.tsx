@@ -116,8 +116,8 @@ export function InlineEditor({ section, onSave, isLoading }: InlineEditorProps) 
                   )}
                 </Button>
               </CollapsibleTrigger>
-              <CardTitle className="text-sm font-medium">
-                {section.sectionId}: {section.title}
+              <CardTitle className="text-base font-semibold">
+                {section.title}
               </CardTitle>
               {hasMissingData && (
                 <TooltipProvider>

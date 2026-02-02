@@ -38,7 +38,9 @@ import {
   Loader2,
   XCircle,
   Edit,
+  Download,
 } from "lucide-react"
+import { Header } from "@/components/dashboard/header"
 import { DocumentView } from "@/components/review/document-view"
 import { EditModeView } from "@/components/review/edit-mode-view"
 
@@ -103,6 +105,7 @@ export default function ProjectPage({
   const [isLoading, setIsLoading] = useState(true)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isStartingWorkflow, setIsStartingWorkflow] = useState(false)
+  const [isExportingPDF, setIsExportingPDF] = useState(false)
   const [viewingStep, setViewingStep] = useState<number>(1) // Track which step user is viewing
   const [viewMode, setViewMode] = useState<"document" | "edit">("document")
   const initialLoadDone = useRef(false)
@@ -284,6 +287,208 @@ export default function ProjectPage({
     localStorage.setItem(`soa-view-mode-${projectId}`, mode)
   }
 
+  const handleExportPDF = async () => {
+    if (!project.sections || project.sections.length === 0) {
+      toast.error("No sections available to export")
+      return
+    }
+
+    setIsExportingPDF(true)
+    
+    try {
+      // Dynamically import jsPDF
+      const { default: jsPDF } = await import("jspdf")
+
+      toast.info("Generating PDF...", { duration: 3000 })
+
+      // Create PDF
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      })
+
+      const pageWidth = 210
+      const pageHeight = 297
+      const marginLeft = 15
+      const marginRight = 15
+      const marginTop = 20
+      const marginBottom = 20
+      const contentWidth = pageWidth - marginLeft - marginRight
+      
+      let y = marginTop
+
+      // Helper to add new page if needed
+      const checkNewPage = (neededHeight: number) => {
+        if (y + neededHeight > pageHeight - marginBottom) {
+          pdf.addPage()
+          y = marginTop
+          return true
+        }
+        return false
+      }
+
+      // Helper to wrap text
+      const addWrappedText = (text: string, x: number, fontSize: number, maxWidth: number, isBold = false) => {
+        pdf.setFontSize(fontSize)
+        pdf.setFont("helvetica", isBold ? "bold" : "normal")
+        
+        const lines = pdf.splitTextToSize(text, maxWidth)
+        const lineHeight = fontSize * 0.4
+        
+        for (const line of lines) {
+          checkNewPage(lineHeight)
+          pdf.text(line, x, y)
+          y += lineHeight
+        }
+        
+        return lines.length * lineHeight
+      }
+
+      // Title
+      pdf.setFontSize(20)
+      pdf.setFont("helvetica", "bold")
+      pdf.setTextColor(17, 24, 39)
+      pdf.text("Statement of Advice", marginLeft, y)
+      y += 12
+
+      // Date
+      pdf.setFontSize(10)
+      pdf.setFont("helvetica", "normal")
+      pdf.setTextColor(107, 114, 128)
+      pdf.text(`Generated: ${new Date().toLocaleDateString()}`, marginLeft, y)
+      y += 15
+
+      // Deduplicate and sort sections
+      const deduplicatedSections = project.sections.reduce((acc, section) => {
+        if (!acc.some(s => s.sectionId === section.sectionId)) {
+          acc.push(section)
+        }
+        return acc
+      }, [] as SoaSection[])
+
+      const sortedSections = [...deduplicatedSections].sort((a, b) => {
+        const getParts = (id: string): number[] => {
+          const parts: number[] = []
+          const mainMatch = id.match(/^M(\d+)/)
+          if (mainMatch) parts.push(parseInt(mainMatch[1]))
+          const subMatch = id.match(/_S(\d+)/)
+          if (subMatch) parts.push(parseInt(subMatch[1]))
+          const subSubMatch = id.match(/_SS(\d+)/)
+          if (subSubMatch) parts.push(parseInt(subSubMatch[1]))
+          return parts
+        }
+        
+        const aParts = getParts(a.sectionId)
+        const bParts = getParts(b.sectionId)
+        
+        for (let i = 0; i < Math.max(aParts.length, bParts.length); i++) {
+          const aVal = aParts[i] ?? 0
+          const bVal = bParts[i] ?? 0
+          if (aVal !== bVal) return aVal - bVal
+        }
+        return aParts.length - bParts.length
+      })
+
+      const getSectionLevel = (sectionId: string): number => {
+        if (sectionId.includes("_SS")) return 2
+        if (sectionId.includes("_S")) return 1
+        return 0
+      }
+
+      // Render ALL sections
+      for (const section of sortedSections) {
+        const level = getSectionLevel(section.sectionId)
+        const indent = level * 8
+        const fontSize = level === 0 ? 14 : level === 1 ? 11 : 10
+        const effectiveWidth = contentWidth - indent
+        
+        checkNewPage(20)
+        
+        pdf.setTextColor(17, 24, 39)
+        addWrappedText(section.title, marginLeft + indent, fontSize, effectiveWidth, true)
+        y += 3
+
+        if (level === 0) {
+          pdf.setDrawColor(229, 231, 235)
+          pdf.line(marginLeft, y, pageWidth - marginRight, y)
+          y += 5
+        } else {
+          y += 2
+        }
+
+        pdf.setTextColor(31, 41, 55)
+        
+        if (section.content.text) {
+          addWrappedText(section.content.text, marginLeft + indent, 10, effectiveWidth)
+          y += 3
+        }
+
+        if (section.content.bullets && section.content.bullets.length > 0) {
+          for (const bullet of section.content.bullets) {
+            checkNewPage(5)
+            addWrappedText(`• ${bullet}`, marginLeft + indent + 5, 10, effectiveWidth - 5)
+          }
+          y += 3
+        }
+
+        if (section.content.tables && section.content.tables.length > 0) {
+          for (const table of section.content.tables) {
+            checkNewPage(20)
+            
+            const tableWidth = effectiveWidth - 10
+            const colWidth = tableWidth / Math.max(table.headers.length, 1)
+            
+            pdf.setFillColor(243, 244, 246)
+            pdf.setTextColor(17, 24, 39)
+            pdf.setFontSize(9)
+            pdf.setFont("helvetica", "bold")
+            
+            const headerHeight = 8
+            checkNewPage(headerHeight)
+            pdf.rect(marginLeft + indent, y, tableWidth, headerHeight, "F")
+            
+            table.headers.forEach((header, i) => {
+              pdf.text(header, marginLeft + indent + 2 + (i * colWidth), y + 5, { maxWidth: colWidth - 4 })
+            })
+            y += headerHeight
+
+            pdf.setFont("helvetica", "normal")
+            pdf.setTextColor(31, 41, 55)
+            
+            for (const row of table.rows) {
+              const rowHeight = 7
+              checkNewPage(rowHeight)
+              
+              pdf.setDrawColor(209, 213, 219)
+              pdf.rect(marginLeft + indent, y, tableWidth, rowHeight)
+              
+              row.forEach((cell, i) => {
+                pdf.text(String(cell), marginLeft + indent + 2 + (i * colWidth), y + 5, { maxWidth: colWidth - 4 })
+              })
+              y += rowHeight
+            }
+            y += 5
+          }
+        }
+
+        y += level === 0 ? 8 : 5
+      }
+
+      // Save the PDF
+      const date = new Date().toISOString().split("T")[0]
+      const filename = `Statement_of_Advice_${date}.pdf`
+      pdf.save(filename)
+      
+      toast.success("PDF downloaded successfully!")
+    } catch (error) {
+      console.error("PDF export error:", error)
+      toast.error("Failed to export PDF. Please try again.")
+    } finally {
+      setIsExportingPDF(false)
+    }
+  }
+
   if (isLoading) {
     return <ProjectPageSkeleton />
   }
@@ -305,60 +510,55 @@ export default function ProjectPage({
   }
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" asChild>
-            <Link href="/projects">
+    <>
+      <Header
+        customContent={
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => router.push("/projects")}
+            >
               <ArrowLeft className="h-4 w-4" />
-            </Link>
-          </Button>
-          <div>
+            </Button>
             <div className="flex items-center gap-2">
-              <h1 className="text-2xl font-bold tracking-tight">
-                {project.name}
-              </h1>
+              <h1 className="text-lg font-semibold">{project.name}</h1>
               <ProjectStatusBadge status={project.status} />
             </div>
-            {project.description && (
-              <p className="text-muted-foreground">{project.description}</p>
-            )}
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="ghost" size="sm">
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete Project</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Are you sure you want to delete &quot;{project.name}&quot;?
+                    This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleDelete}
+                    disabled={isDeleting}
+                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  >
+                    {isDeleting ? "Deleting..." : "Delete"}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button variant="destructive" size="sm">
-                <Trash2 className="mr-2 h-4 w-4" />
-                Delete
-              </Button>
-            </AlertDialogTrigger>
-            <AlertDialogContent>
-              <AlertDialogHeader>
-                <AlertDialogTitle>Delete Project</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Are you sure you want to delete &quot;{project.name}&quot;?
-                  This action cannot be undone.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={handleDelete}
-                  disabled={isDeleting}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                >
-                  {isDeleting ? "Deleting..." : "Delete"}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
-        </div>
-      </div>
-
-      {/* Workflow Stepper */}
-      <WorkflowStepper
+        }
+      />
+      <main className="flex-1 overflow-hidden bg-muted/10 p-4 lg:p-6">
+        <div className="flex flex-col h-full space-y-6">
+          {/* Workflow Stepper */}
+          <div className="shrink-0">
+            <WorkflowStepper
         currentStep={viewingStep}
         stepStatuses={workflowState.stepStatuses}
         onStepClick={(stepId) => {
@@ -378,9 +578,10 @@ export default function ProjectPage({
           }
         }}
       />
+          </div>
 
       {/* Main Content */}
-      <Card>
+      <Card className="flex flex-col min-h-0 flex-1">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle>SOA Sections</CardTitle>
@@ -414,6 +615,20 @@ export default function ProjectPage({
                     </div>
                     <Button
                       variant="outline"
+                      size="sm"
+                      onClick={handleExportPDF}
+                      disabled={isExportingPDF}
+                      className="h-8"
+                    >
+                      {isExportingPDF ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Download className="mr-2 h-4 w-4" />
+                      )}
+                      {isExportingPDF ? "Exporting..." : "Download PDF"}
+                    </Button>
+                    <Button
+                      variant="outline"
                       onClick={handleStartWorkflow}
                       disabled={isStartingWorkflow || workflowState.stepStatuses.step2 === "in_progress"}
                     >
@@ -426,7 +641,7 @@ export default function ProjectPage({
                 )}
               </div>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex-1 min-h-0 flex flex-col">
               {workflowState.stepStatuses.step2 === "in_progress" ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <Loader2 className="mb-4 h-12 w-12 text-primary animate-spin" />
@@ -485,11 +700,11 @@ export default function ProjectPage({
                 </div>
               ) : project.sections?.length ? (
                 viewMode === "document" ? (
-                  <div className="h-[600px] overflow-hidden">
+                  <div className="flex-1 min-h-0 overflow-hidden">
                     <DocumentView sections={project.sections} />
                   </div>
                 ) : (
-                  <div className="h-[600px] overflow-hidden">
+                  <div className="flex-1 min-h-0 overflow-hidden">
                     <EditModeView
                       sections={project.sections}
                       projectId={projectId}
@@ -515,7 +730,9 @@ export default function ProjectPage({
               )}
             </CardContent>
           </Card>
-    </div>
+      </div>
+    </main>
+  </>
   )
 }
 

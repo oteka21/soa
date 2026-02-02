@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Search } from "lucide-react"
+import { Header } from "@/components/dashboard/header"
 
 interface Project {
   id: string
@@ -64,7 +65,10 @@ export default function ProjectsPage() {
     })
 
   return (
-    <div className="space-y-6">
+    <>
+      <Header />
+      <main className="flex-1 overflow-y-auto bg-muted/10 p-4 lg:p-6">
+        <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Projects</h1>
@@ -100,6 +104,8 @@ export default function ProjectsPage() {
       </div>
 
       <ProjectList projects={filteredProjects} isLoading={isLoading} />
-    </div>
+        </div>
+      </main>
+    </>
   )
 }

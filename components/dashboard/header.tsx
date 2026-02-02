@@ -17,7 +17,11 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { LogOut, User, Settings } from "lucide-react"
 import { ModeToggle } from "@/components/mode-toggle"
 
-export function Header() {
+interface HeaderProps {
+  customContent?: React.ReactNode
+}
+
+export function Header({ customContent }: HeaderProps = {}) {
   const router = useRouter()
   const { data: session, isPending } = useSession()
 
@@ -44,7 +48,14 @@ export function Header() {
   return (
     <header className="sticky top-0 z-50 flex h-14 items-center gap-4 border-b bg-background px-4 lg:px-6">
       <MobileSidebar />
-      <div className="flex-1" />
+      {customContent ? (
+        <>
+          {customContent}
+          <div className="flex-1" />
+        </>
+      ) : (
+        <div className="flex-1" />
+      )}
       <div className="flex items-center gap-2">
         <ModeToggle />
         {isPending ? (

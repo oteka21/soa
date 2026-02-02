@@ -23,6 +23,7 @@ import { DocumentView } from "@/components/review/document-view"
 import { EditModeView } from "@/components/review/edit-mode-view"
 import { toast } from "sonner"
 import { ArrowLeft, History, MessageSquare, FileText, Edit } from "lucide-react"
+import { Header } from "@/components/dashboard/header"
 
 interface SectionContent {
   text?: string
@@ -237,7 +238,10 @@ export default function ReviewPage({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <>
+      <Header />
+      <main className="flex-1 overflow-hidden bg-muted/10">
+        <div className="flex h-full flex-col p-4 lg:p-6">
       {/* Header */}
       <div className="flex items-center justify-between border-b pb-4 shrink-0">
         <div className="flex items-center gap-4">
@@ -376,7 +380,9 @@ export default function ReviewPage({
           </div>
         </div>
       )}
-    </div>
+        </div>
+      </main>
+    </>
   )
 }
 

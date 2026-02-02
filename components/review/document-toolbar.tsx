@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Printer, Download, Loader2 } from "lucide-react"
+import { Download, Loader2 } from "lucide-react"
 import { toast } from "sonner"
 
 interface SectionContent {
@@ -35,10 +35,6 @@ interface DocumentToolbarProps {
 
 export function DocumentToolbar({ documentTitle = "Statement_of_Advice", sections = [] }: DocumentToolbarProps) {
   const [isExporting, setIsExporting] = useState(false)
-
-  const handlePrint = () => {
-    window.print()
-  }
 
   const handleExportPDF = async () => {
     if (!sections || sections.length === 0) {
@@ -258,10 +254,6 @@ export function DocumentToolbar({ documentTitle = "Statement_of_Advice", section
 
   return (
     <div className="flex items-center gap-2 mb-4 print:hidden">
-      <Button variant="outline" size="sm" onClick={handlePrint}>
-        <Printer className="mr-2 h-4 w-4" />
-        Print
-      </Button>
       <Button 
         variant="outline" 
         size="sm" 

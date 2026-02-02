@@ -4,6 +4,7 @@ import { useEffect, useState } from "react"
 import { ProjectList } from "@/components/projects/project-list"
 import { CreateProjectDialog } from "@/components/projects/create-project-dialog"
 import { useSession } from "@/lib/auth-client"
+import { Header } from "@/components/dashboard/header"
 
 interface Project {
   id: string
@@ -45,46 +46,51 @@ export default function DashboardPage() {
   }))
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
-          <p className="text-muted-foreground">
-            Welcome back{session?.user?.name ? `, ${session.user.name}` : ""}!
-            Here are your SOA projects.
-          </p>
+    <>
+      <Header />
+      <main className="flex-1 overflow-y-auto bg-muted/10 p-4 lg:p-6">
+        <div className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">Dashboard</h1>
+              <p className="text-muted-foreground">
+                Welcome back{session?.user?.name ? `, ${session.user.name}` : ""}!
+                Here are your SOA projects.
+              </p>
+            </div>
+            <CreateProjectDialog />
+          </div>
+
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              title="Total Projects"
+              value={transformedProjects.length}
+              description="All time"
+            />
+            <StatCard
+              title="In Progress"
+              value={transformedProjects.filter((p) => p.status === "in_progress").length}
+              description="Currently active"
+            />
+            <StatCard
+              title="In Review"
+              value={transformedProjects.filter((p) => p.status === "review").length}
+              description="Awaiting approval"
+            />
+            <StatCard
+              title="Completed"
+              value={transformedProjects.filter((p) => p.status === "completed").length}
+              description="Finalized"
+            />
+          </div>
+
+          <div>
+            <h2 className="mb-4 text-lg font-semibold">Recent Projects</h2>
+            <ProjectList projects={transformedProjects} isLoading={isLoading} />
+          </div>
         </div>
-        <CreateProjectDialog />
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          title="Total Projects"
-          value={transformedProjects.length}
-          description="All time"
-        />
-        <StatCard
-          title="In Progress"
-          value={transformedProjects.filter((p) => p.status === "in_progress").length}
-          description="Currently active"
-        />
-        <StatCard
-          title="In Review"
-          value={transformedProjects.filter((p) => p.status === "review").length}
-          description="Awaiting approval"
-        />
-        <StatCard
-          title="Completed"
-          value={transformedProjects.filter((p) => p.status === "completed").length}
-          description="Finalized"
-        />
-      </div>
-
-      <div>
-        <h2 className="mb-4 text-lg font-semibold">Recent Projects</h2>
-        <ProjectList projects={transformedProjects} isLoading={isLoading} />
-      </div>
-    </div>
+      </main>
+    </>
   )
 }
 
